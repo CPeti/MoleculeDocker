@@ -206,7 +206,7 @@ void onDisplay() {
 
 	// Set color to (0, 1, 0) = green
 	int location = glGetUniformLocation(gpuProgram.getId(), "color");
-	glUniform3f(location, 0.0f, 1.0f, 0.0f); // 3 floats
+	glUniform3f(location, 1.0f, 1.0f, 1.0f); // 3 floats
 
 	float MVPtransf[4][4] = { 1, 0, 0, 0,    // MVP matrix, 
 							  0, 1, 0, 0,    // row-major!
@@ -215,9 +215,11 @@ void onDisplay() {
 
 	location = glGetUniformLocation(gpuProgram.getId(), "MVP");	// Get the GPU location of uniform variable MVP
 	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);	// Load a 4x4 row-major float matrix to the specified location
-
+	
 	glBindVertexArray(vao);  // Draw call
 	glDrawArrays(GL_LINE_STRIP, 0 /*startIdx*/, 8 /*# Elements*/);
+	int location2 = glGetUniformLocation(gpuProgram.getId(), "color");
+	glUniform3f(location2, 0.0f, 0.0f, 1.0f); // 3 floats
 	glBindVertexArray(vao);  // Draw call
 	glDrawArrays(GL_POINTS, 0 /*startIdx*/, 8 /*# Elements*/);
 
