@@ -65,6 +65,8 @@ private:
 	Atom* atoms;
 	int totalMass = 0;
 	vec2 center;
+	std::vector<vec2> vertices;
+	std::vector<vec2> edges;
 public:
 	Molecule() {
 		size = rand() % 7 + 2;
@@ -94,14 +96,19 @@ public:
 		atoms[rootIndex].offset = vec2(0, 0);
 		atoms[rootIndex].assigned = true;
 		build(atoms[rootIndex]);
+		for (int i = 0; i < size; i++) {
+			vertices.push_back(atoms[i].offset);
+		}
 	}
 	void build(Atom root) {
-		float angle = 2 * pi / root.bonds + 0.01f * (rand() % 7);
-		float x = 0.10f + 0.1 * (rand() % 5 + 1);
-		float y = 0;
 		for (int i = 0; i < root.bonds; i++) {
 			if (!root.bondedWith[i]->assigned) {
-				root.bondedWith[i]->offset = root.offset + vec2(x * cos(angle * i) - y * sin(angle * i), x * sin(angle * i) + y * cos(angle * i));
+				float angle = 2 * pi / root.bonds + 0.01f * (rand() % 5);
+				float x = 0.10f + 0.1 * (rand() % 7 + 1);
+				float y = 0;
+				root.bondedWith[i]->offset = root.offset + vec2(x * cos(angle * i) - y * sin(angle * i), x * sin(angle * i) + y * cos(angle * i)) + vec2();
+				edges.push_back(root.offset);
+				edges.push_back(root.bondedWith[i]->offset);
 				root.bondedWith[i]->assigned = true;
 				build(*root.bondedWith[i]);
 			}
@@ -122,13 +129,11 @@ public:
 		}
 	}
 
-	std::vector<vec2> getCoords() {
-		std::vector<vec2> coords;
-		for (int i = 0; i < size; i++) {
-			coords.push_back(atoms[i].offset);
-		}
-		return coords;
-
+	std::vector<vec2> getVertices() {
+		return vertices;
+	}
+	std::vector<vec2> getEdges() {
+		return edges;
 	}
 
 	~Molecule() {
@@ -179,16 +184,18 @@ void onInitialization() {
 	glBindBuffer(GL_ARRAY_BUFFER, vbo);
 	// Geometry with 24 bytes (6 floats or 3 x 2 coordinates)
 	Molecule* m = new Molecule();
-	std::vector<vec2> vec = m->getCoords();
+	std::vector<vec2> vertices = m->getVertices();
+	std::vector<vec2> edges = m->getEdges();
 
 	//float vertices[] = { -0.8f, -0.8f, -0.6f, 1.0f, 0.8f, -0.2f, -0.4f, 0.3f};
-	for (int i = 0; i < vec.size(); i++) {
-		printf("\n%f, %f", vec[i].x, vec[i].y);
+	printf("_____________________________________________________________________");
+	for (int i = 0; i < vertices.size(); i++) {
+		printf("\n%f, %f\n", vertices[i].x, vertices[i].y);
 	}
 	
 	glBufferData(GL_ARRAY_BUFFER, 	// Copy to GPU target
-		vec.size() * sizeof(vec2),  // # bytes
-		&vec[0],	      	// address
+		edges.size() * sizeof(vec2),  // # bytes
+		&edges[0],	      	// address
 		GL_DYNAMIC_DRAW);	// we do not change later
 
 	glEnableVertexAttribArray(0);  // AttribArray 0
@@ -217,11 +224,11 @@ void onDisplay() {
 	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);	// Load a 4x4 row-major float matrix to the specified location
 	
 	glBindVertexArray(vao);  // Draw call
-	glDrawArrays(GL_LINE_STRIP, 0 /*startIdx*/, 8 /*# Elements*/);
+	glDrawArrays(GL_LINE_STRIP, 0 /*startIdx*/, 14 /*# Elements*/);
 	int location2 = glGetUniformLocation(gpuProgram.getId(), "color");
 	glUniform3f(location2, 0.0f, 0.0f, 1.0f); // 3 floats
 	glBindVertexArray(vao);  // Draw call
-	glDrawArrays(GL_POINTS, 0 /*startIdx*/, 8 /*# Elements*/);
+	glDrawArrays(GL_POINTS, 0 /*startIdx*/, 14 /*# Elements*/);
 
 	glutSwapBuffers(); // exchange buffers for double buffering
 }

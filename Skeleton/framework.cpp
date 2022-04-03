@@ -28,6 +28,7 @@ void onIdle();
 
 // Entry point of the application
 int main(int argc, char * argv[]) {
+	srand(1);
 	// Initialize GLUT, Glew and OpenGL 
 	glutInit(&argc, argv);
 
