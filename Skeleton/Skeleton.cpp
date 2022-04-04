@@ -18,8 +18,8 @@
 //
 // NYILATKOZAT
 // ---------------------------------------------------------------------------------------------
-// Nev    : 
-// Neptun : 
+// Nev    : Czumbel Peter
+// Neptun : ODZF0M
 // ---------------------------------------------------------------------------------------------
 // ezennel kijelentem, hogy a feladatot magam keszitettem, es ha barmilyen segitseget igenybe vettem vagy
 // mas szellemi termeket felhasznaltam, akkor a forrast es az atvett reszt kommentekben egyertelmuen jeloltem.
@@ -32,114 +32,14 @@
 // negativ elojellel szamoljak el es ezzel parhuzamosan eljaras is indul velem szemben.
 //=============================================================================================
 #include "framework.h"
+#include <time.h>
+
 int maxMass = 50;
 int maxCharge = 100;
 int bondRadius = 10; //px
 float pi = 3.141592653589;
 
-class Atom {
-public:
-	int ID = NULL;
-	int mass;
-	int charge;
-	int bonds;
-	Atom* bondedWith[8] = {};
-	vec2 offset = NULL;
-	bool assigned = false;
 
-	Atom() {
-		mass = rand() % maxMass + 1;		//1-50x a hidrogén tömege
-		bonds = 0;
-		charge = 0;
-	}
-	void bind(Atom* a) {
-		bondedWith[bonds] = a;
-		bonds++;
-	}
-	
-};
-
-class Molecule {
-private:
-	int size = 1;
-	Atom* atoms;
-	int totalMass = 0;
-	vec2 center;
-	std::vector<vec2> vertices;
-	std::vector<vec2> edges;
-public:
-	Molecule() {
-		size = rand() % 7 + 2;
-		atoms = new Atom[size];
-		for (int i = 0; i < size; i++) {
-			atoms[i].ID = i;
-			if (i > 0) {
-				int j = rand() % i;
-				atoms[i].bind(&atoms[j]);
-				atoms[j].bind(&atoms[i]);
-			}
-		}
-		for (int i = 0; i < size; i++) {
-			totalMass += atoms[i].mass;
-			int delta = rand() % maxCharge + 1;
-			atoms[i].charge -= delta;
-			atoms[(i+1)%size].charge  += delta;
-		}
-		int rootIndex = 0;							//node with maximum edges
-		int maxBonds = 0;
-		for (int i = 0; i < size; i++) {
-			if (atoms[i].bonds > maxBonds) {
-				maxBonds = atoms[i].bonds;
-				rootIndex = i;
-			}
-		}
-		atoms[rootIndex].offset = vec2(0, 0);
-		atoms[rootIndex].assigned = true;
-		build(atoms[rootIndex]);
-		for (int i = 0; i < size; i++) {
-			vertices.push_back(atoms[i].offset);
-		}
-	}
-	void build(Atom root) {
-		for (int i = 0; i < root.bonds; i++) {
-			if (!root.bondedWith[i]->assigned) {
-				float angle = 2 * pi / root.bonds + 0.01f * (rand() % 5);
-				float x = 0.10f + 0.1 * (rand() % 7 + 1);
-				float y = 0;
-				root.bondedWith[i]->offset = root.offset + vec2(x * cos(angle * i) - y * sin(angle * i), x * sin(angle * i) + y * cos(angle * i)) + vec2();
-				edges.push_back(root.offset);
-				edges.push_back(root.bondedWith[i]->offset);
-				root.bondedWith[i]->assigned = true;
-				build(*root.bondedWith[i]);
-			}
-		}
-	}
-
-	int getTotalMass() {
-		return totalMass;
-	}
-
-	void printInfo() {
-		for (int i = 0; i < size; i++) {
-			printf("ID: %d, Offset: (%f, %f), Edges: ", atoms[i].ID, atoms[i].offset.x, atoms[i].offset.y);
-			for (int j = 0; j < atoms[i].bonds; j++) {
-				printf("%d ", atoms[i].bondedWith[j]->ID);
-			}
-			printf("\n");
-		}
-	}
-
-	std::vector<vec2> getVertices() {
-		return vertices;
-	}
-	std::vector<vec2> getEdges() {
-		return edges;
-	}
-
-	~Molecule() {
-		delete atoms;
-	}
-};
 
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
 const char * const vertexSource = R"(
@@ -167,41 +67,230 @@ const char * const fragmentSource = R"(
 	}
 )";
 
+// 2D camera
+class Camera2D {
+	vec2 wCenter; // center in world coordinates
+	vec2 wSize;   // width and height in world coordinates
+public:
+	Camera2D() : wCenter(0, 0), wSize(200, 200) { }
+
+	mat4 V() { return TranslateMatrix(-wCenter); }
+	mat4 P() { return ScaleMatrix(vec2(2 / wSize.x, 2 / wSize.y)); }
+
+	mat4 Vinv() { return TranslateMatrix(wCenter); }
+	mat4 Pinv() { return ScaleMatrix(vec2(wSize.x / 2, wSize.y / 2)); }
+
+	void Zoom(float s) { wSize = wSize * s; }
+	void Pan(vec2 t) { wCenter = wCenter + t; }
+};
+
+Camera2D camera;
 GPUProgram gpuProgram; // vertex and fragment shaders
-unsigned int vao;	   // virtual world on the GPU
+
+
+class Atom {
+public:
+	int ID = 0;
+	int mass;
+	int charge;
+	int bonds;
+	std::vector<Atom*> bondedWith;
+	vec2 offset = NULL;
+	bool assigned = false;
+
+	unsigned int vao2;
+	const int nv = 20;
+
+	Atom() {
+		mass = rand() % maxMass + 1;		//1-50x a hidrogén tömege
+		bonds = 0;
+		charge = 0;
+	}
+	void bind(Atom* a) {
+		bondedWith.push_back(a);
+		bonds++;
+	}
+	void create() {
+		glGenVertexArrays(1, &vao2);
+		glBindVertexArray(vao2);
+
+		unsigned int vbo;
+		glGenBuffers(1, &vbo);
+
+		const int nv = 20;
+		vec2 vertices[nv];
+		for (int i = 0; i < nv; i++) {
+			float fi = i * 2 * pi / nv;
+			vertices[i] = vec2(cosf(fi), sinf(fi));
+		}
+
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		glBufferData(GL_ARRAY_BUFFER,
+			nv * sizeof(vec2),
+			vertices,
+			GL_DYNAMIC_DRAW);
+
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0,
+			2, GL_FLOAT,
+			GL_FALSE,
+			0, NULL
+		);
+	}
+	void draw() {
+		gpuProgram.setUniform(vec3(1.0f, 0.0f, 0.0f), "color");
+		glBindVertexArray(vao2);
+		glDrawArrays(GL_TRIANGLE_FAN, 0, nv);
+	}
+
+};
+
+class Molecule {
+private:
+	int size;
+	int totalMass = 0;
+	std::vector<Atom*> atoms;
+	std::vector<vec2> vertices;
+	std::vector<vec2> edges;
+
+
+	vec2 center;		//center of mass
+	float phi = 0;		//angle of rotation
+	vec2 wTranslate;	//translation
+	float sx = 10;
+	float sy = 10;		//scaling
+	unsigned int vao;
+public:
+	Molecule() {
+		srand(time(NULL));
+		size = rand() % 7 + 2;
+		for (int i = 0; i < size; i++) {
+			atoms.push_back(new Atom());
+			atoms[i]->ID = i;
+			if (i > 0) {
+				int j = rand() % i;
+				atoms[i]->bind(atoms[j]);
+				atoms[j]->bind(atoms[i]);
+			}
+		}
+		for (int i = 0; i < size; i++) {
+			totalMass += atoms[i]->mass;
+			int delta = rand() % maxCharge + 1;
+			atoms[i]->charge -= delta;
+			atoms[(i + 1) % size]->charge += delta;
+		}
+		int rootIndex = 0;							//node with maximum edges
+		int maxBonds = 0;
+		for (int i = 0; i < size; i++) {
+			if (atoms[i]->bonds > maxBonds) {
+				maxBonds = atoms[i]->bonds;
+				rootIndex = i;
+			}
+		}
+		atoms[rootIndex]->offset = vec2(0, 0);
+		atoms[rootIndex]->assigned = true;
+		printf("%d\n", size);
+		build(*atoms[rootIndex]);
+		for (int i = 0; i < size; i++) {
+			vertices.push_back(atoms[i]->offset);
+		}
+
+		for (int i = 0; i < size; i++) {
+			center = center + atoms[i]->offset * atoms[i]->mass;
+		}
+		center = center / totalMass;
+	}
+	void build(Atom root) {		
+		for (int i = 0; i < root.bonds; i++) {
+			if (!root.bondedWith[i]->assigned) {
+				float angle = 2 * pi / (root.bonds) + rand()%180 * pi/180;
+				float x = 5.0f - (0.1 * (float)(rand()%50) - 2.5);
+				float y = 0;
+				root.bondedWith[i]->offset = root.offset + vec2(x * cosf(angle * i) - y * sinf(angle * i), x * sinf(angle * i) + y * cosf(angle * i));
+				edges.push_back(root.offset);
+				edges.push_back(root.bondedWith[i]->offset);
+				root.bondedWith[i]->assigned = true;
+				build(*root.bondedWith[i]);
+			}
+		}
+	}
+	void create() {
+		
+		glGenVertexArrays(1, &vao);
+		glBindVertexArray(vao);
+
+		unsigned int vbo;
+		glGenBuffers(1, &vbo);
+
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		glBufferData(GL_ARRAY_BUFFER,
+			edges.size() * sizeof(vec2),
+			&edges[0],
+			GL_DYNAMIC_DRAW);
+
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0,
+			2, GL_FLOAT,
+			GL_FALSE,
+			sizeof(vec2), NULL
+		);
+
+		for (int i = 0; i < size; i++) {
+			atoms[i]->create();
+		}
+	}
+
+	void update(float deltaT) {
+
+	}
+
+	mat4 M() {
+		mat4 Mscale(sx, 0, 0, 0,
+			0, sy, 0, 0,
+			0, 0, 0, 0,
+			0, 0, 0, 1); // scaling
+
+		mat4 Mrotate(cosf(phi), sinf(phi), 0, 0,
+			-sinf(phi), cosf(phi), 0, 0,
+			0, 0, 1, 0,
+			0, 0, 0, 1); // rotation
+
+		mat4 Mtranslate(1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 0, 0,
+			wTranslate.x, wTranslate.y, 0, 1); // translation
+
+		return Mscale * Mrotate * Mtranslate;	// model transformation
+	}
+
+	void draw() {
+		// set GPU uniform matrix variable MVP with the content of CPU variable MVPTransform
+		mat4 MVPTransform = M() * camera.V() * camera.P();
+		gpuProgram.setUniform(MVPTransform, "MVP");
+		gpuProgram.setUniform(vec3(1.0f, 1.0f, 1.0f), "color");
+		glBindVertexArray(vao);	// make the vao and its vbos active playing the role of the data source
+		glDrawArrays(GL_LINES, 0, edges.size());	// draw edges
+		gpuProgram.setUniform(vec3(0.0f, 0.0f, 1.0f), "color");
+		glBindVertexArray(vao);	// make the vao and its vbos active playing the role of the data source
+		glDrawArrays(GL_POINTS, 0, edges.size());	// draw edges
+
+		for(int i = 0; i < size; i++){
+			atoms[i]->draw();
+		}
+	}
+	~Molecule() {
+	}
+};
+
+Molecule* m1 = new Molecule();
 
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 	glLineWidth(2.0f);
 	glPointSize(10.0f);
-
-	glGenVertexArrays(1, &vao);	// get 1 vao id
-	glBindVertexArray(vao);		// make it active
-
-	unsigned int vbo;		// vertex buffer object
-	glGenBuffers(1, &vbo);	// Generate 1 buffer
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	// Geometry with 24 bytes (6 floats or 3 x 2 coordinates)
-	Molecule* m = new Molecule();
-	std::vector<vec2> vertices = m->getVertices();
-	std::vector<vec2> edges = m->getEdges();
-
-	//float vertices[] = { -0.8f, -0.8f, -0.6f, 1.0f, 0.8f, -0.2f, -0.4f, 0.3f};
-	printf("_____________________________________________________________________");
-	for (int i = 0; i < vertices.size(); i++) {
-		printf("\n%f, %f\n", vertices[i].x, vertices[i].y);
-	}
+	m1->create();
 	
-	glBufferData(GL_ARRAY_BUFFER, 	// Copy to GPU target
-		edges.size() * sizeof(vec2),  // # bytes
-		&edges[0],	      	// address
-		GL_DYNAMIC_DRAW);	// we do not change later
-
-	glEnableVertexAttribArray(0);  // AttribArray 0
-	glVertexAttribPointer(0,       // vbo -> AttribArray 0
-		2, GL_FLOAT, GL_FALSE, // two floats/attrib, not fixed-point
-		sizeof(vec2), NULL); 		     // stride, offset: tightly packed
 	// create program for the GPU
 	gpuProgram.create(vertexSource, fragmentSource, "outColor");
 }
@@ -209,68 +298,40 @@ void onInitialization() {
 // Window has become invalid: Redraw
 void onDisplay() {
 	glClearColor(0, 0, 0, 0);     // background color <- should be in init()
-	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // clear frame buffer
 
-	// Set color to (0, 1, 0) = green
-	int location = glGetUniformLocation(gpuProgram.getId(), "color");
-	glUniform3f(location, 1.0f, 1.0f, 1.0f); // 3 floats
-
-	float MVPtransf[4][4] = { 1, 0, 0, 0,    // MVP matrix, 
-							  0, 1, 0, 0,    // row-major!
-							  0, 0, 1, 0,
-							  0, 0, 0, 1 };
-
-	location = glGetUniformLocation(gpuProgram.getId(), "MVP");	// Get the GPU location of uniform variable MVP
-	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);	// Load a 4x4 row-major float matrix to the specified location
-	
-	glBindVertexArray(vao);  // Draw call
-	glDrawArrays(GL_LINE_STRIP, 0 /*startIdx*/, 14 /*# Elements*/);
-	int location2 = glGetUniformLocation(gpuProgram.getId(), "color");
-	glUniform3f(location2, 0.0f, 0.0f, 1.0f); // 3 floats
-	glBindVertexArray(vao);  // Draw call
-	glDrawArrays(GL_POINTS, 0 /*startIdx*/, 14 /*# Elements*/);
+	m1->draw();
 
 	glutSwapBuffers(); // exchange buffers for double buffering
 }
 
 // Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
-	if (key == 'd') glutPostRedisplay();         // if d, invalidate display, i.e. redraw
+	if (key == 'd') {
+		delete m1;
+		m1 = new Molecule();
+		m1->create();
+		glutPostRedisplay();         // if d, invalidate display, i.e. redraw
+	}
 }
 
 // Key of ASCII code released
-void onKeyboardUp(unsigned char key, int pX, int pY) {
-	
+void onKeyboard(unsigned char key, int pX, int pY) {
 }
 
 // Move mouse with key pressed
 void onMouseMotion(int pX, int pY) {	// pX, pY are the pixel coordinates of the cursor in the coordinate system of the operation system
-	// Convert to normalized device space
-	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
-	float cY = 1.0f - 2.0f * pY / windowHeight;
-	printf("Mouse moved to (%3.2f, %3.2f)\n", cX, cY);
 }
 
 // Mouse click event
 void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel coordinates of the cursor in the coordinate system of the operation system
-	// Convert to normalized device space
-	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
-	float cY = 1.0f - 2.0f * pY / windowHeight;
-
-	char * buttonStat;
-	switch (state) {
-	case GLUT_DOWN: buttonStat = "pressed"; break;
-	case GLUT_UP:   buttonStat = "released"; break;
-	}
-
-	switch (button) {
-	case GLUT_LEFT_BUTTON:   printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);   break;
-	case GLUT_MIDDLE_BUTTON: printf("Middle button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY); break;
-	case GLUT_RIGHT_BUTTON:  printf("Right button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);  break;
-	}
 }
 
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
+	float sec = time / 1000.0f;
+	m1->update(0.01);
+	glutPostRedisplay();
+	
 }
