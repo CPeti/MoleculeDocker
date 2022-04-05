@@ -32,14 +32,6 @@
 // negativ elojellel szamoljak el es ezzel parhuzamosan eljaras is indul velem szemben.
 //=============================================================================================
 #include "framework.h"
-#include <time.h>
-
-int maxMass = 50;
-int maxCharge = 100;
-int bondRadius = 10; //px
-float pi = 3.141592653589;
-
-
 
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
 const char* const vertexSource = R"(
@@ -48,7 +40,7 @@ const char* const vertexSource = R"(
 	uniform mat4 MVP;			// uniform variable, the Model-View-Projection transformation matrix
 	layout(location = 0) in vec2 vp;	// Varying input: vp = vertex position is expected in attrib array 0
 	void main() {
-		gl_Position = vec4(vp.x, vp.y, 0, 1) * MVP;		// transform vp from modeling space to normalized device space
+		gl_Position = vec4(vp.x, vp.y, 0, sqrt(vp.x*vp.x+vp.y*vp.y+1.0f)) * MVP;		// transform vp from modeling space to normalized device space
 	}
 )";
 
@@ -64,12 +56,22 @@ const char* const fragmentSource = R"(
 	}
 )";
 
+vec2 rotate(vec2 point, vec2 pivot, float phi);
+
+
+int maxMass = 50;
+int maxCharge = 100;
+int bondRadius = 10; //px
+float pi = 3.141592653589;
+
+float wX = 600;
+float wY = 600;
 // 2D camera
 class Camera2D {
 	vec2 wCenter; // center in world coordinates
 	vec2 wSize;   // width and height in world coordinates
 public:
-	Camera2D() : wCenter(0, 0), wSize(200, 200) { }
+	Camera2D() : wCenter(0, 0), wSize(wX, wY) { }
 
 	mat4 V() { return TranslateMatrix(-wCenter); }
 	mat4 P() { return ScaleMatrix(vec2(2 / wSize.x, 2 / wSize.y)); }
@@ -95,15 +97,20 @@ public:
 	vec2 offset = NULL;
 	bool assigned = false;
 
-	unsigned int vao2;
+	unsigned int vao;
+	unsigned int vbo = 0;
 	const int nv = 20;
-	float phi = 0;		//angle of rotation
-	float sx = 10;
-	float sy = 10;		//scaling
+	float phi = 0;
+
+	float phiTranslate = 0;		//angle of rotation
+	float sx = wX/2;
+	float sy = wY/2;		//scaling
 	vec2 wTranslate;
+	std::vector<vec2> vertices;
+	float r = 0.03;
 
 	Atom() {
-		mass = 5;//rand() % maxMass + 1;		//1-50x a hidrogén tömege
+		mass = rand() % maxMass + 1;		//1-50x a hidrogén tömege
 		bonds = 0;
 		charge = 0;
 	}
@@ -112,23 +119,20 @@ public:
 		bonds++;
 	}
 	void create() {
-		glGenVertexArrays(1, &vao2);
-		glBindVertexArray(vao2);
+		glGenVertexArrays(1, &vao);
+		glBindVertexArray(vao);
 
-		unsigned int vbo;
 		glGenBuffers(1, &vbo);
 
-		const int nv = 20;
-		vec2 vertices[nv];
 		for (int i = 0; i < nv; i++) {
 			float fi = i * 2 * pi / nv;
-			vertices[i] = vec2(offset.x + 0.3*cosf(fi), offset.y + 0.3*sinf(fi));
+			vertices.push_back(vec2(offset.x + r*cosf(fi), offset.y + r*sinf(fi)));
 		}
 
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 		glBufferData(GL_ARRAY_BUFFER,
 			nv * sizeof(vec2),
-			vertices,
+			&vertices[0],
 			GL_DYNAMIC_DRAW);
 
 		glEnableVertexAttribArray(0);
@@ -144,8 +148,8 @@ public:
 			0, 0, 0, 0,
 			0, 0, 0, 1); // scaling
 
-		mat4 Mrotate(cosf(phi), sinf(phi), 0, 0,
-			-sinf(phi), cosf(phi), 0, 0,
+		mat4 Mrotate(cosf(phiTranslate), sinf(phiTranslate), 0, 0,
+			-sinf(phiTranslate), cosf(phiTranslate), 0, 0,
 			0, 0, 1, 0,
 			0, 0, 0, 1); // rotation
 
@@ -157,13 +161,28 @@ public:
 		return Mscale * Mrotate * Mtranslate;	// model transformation
 	}
 	void draw() {
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, nv * sizeof(vec2), &vertices[0]);
 		mat4 MVPTransform = M() * camera.V() * camera.P();
 		gpuProgram.setUniform(MVPTransform, "MVP");
-		gpuProgram.setUniform(charge>=0 ? vec3(1.0f, 0.0f, 0.0f) : vec3(0.0f, 0.0f, 1.0f), "color");
-		glBindVertexArray(vao2);
+		float t = fabs(((float)charge)/ ((float)maxCharge - 1));
+		gpuProgram.setUniform(charge>=0 ? vec3(t, 0.0f, 0.0f) : vec3(0.0f, 0.0f, t), "color");
+		glBindVertexArray(vao);
 		glDrawArrays(GL_TRIANGLE_FAN, 0, nv);
 	}
-
+	void move(vec2 t) {
+		for (int i = 0; i < nv; i++) {
+			vertices[i] = vertices[i] + t;
+		}
+	}
+	void rotateBy(float phi, vec2 pivot) {
+		this->phi = phi;
+		for (int i = 0; i < nv; i++) {
+			vertices[i] = rotate(vertices[i], pivot, this->phi);
+		}
+	}
+	~Atom() {
+	}
 };
 
 class Molecule {
@@ -171,19 +190,22 @@ private:
 	int size;
 	int totalMass = 0;
 	std::vector<Atom*> atoms;
-	std::vector<vec2> vertices;
 	std::vector<vec2> edges;
+	std::vector<vec2> edgesVectorized;
+	int nvEdge = 20;
+	vec2 position = vec2(0, 0);
+	float phi = 0;
 
 
 	vec2 center;		//center of mass
-	float phi = 0;		//angle of rotation
-	vec2 wTranslate;	//translation
-	float sx = 10;
-	float sy = 10;		//scaling
+	float phiTranslate = 0;		//angle of rotation
+	vec2 wTranslate = vec2(0, 0);	//translation
+	float sx = wX/2;
+	float sy = wY/2;		//scaling
 	unsigned int vao;
+	unsigned int vbo;
 public:
 	Molecule() {
-		srand(time(NULL));
 		size = rand() % 7 + 2;
 		for (int i = 0; i < size; i++) {
 			atoms.push_back(new Atom());
@@ -210,11 +232,8 @@ public:
 		}
 		atoms[rootIndex]->offset = vec2(0, 0);
 		atoms[rootIndex]->assigned = true;
-		printf("%d\n", size);
+		printf("n: %d\n", size);
 		build(*atoms[rootIndex]);
-		for (int i = 0; i < size; i++) {
-			vertices.push_back(atoms[i]->offset);
-		}
 
 		for (int i = 0; i < size; i++) {
 			center = center + atoms[i]->offset * atoms[i]->mass;
@@ -226,14 +245,22 @@ public:
 		for (int i = 0; i < edges.size(); i++) {
 			edges[i] = edges[i] - center;
 		}
+		for (int i = 0; i < edges.size(); i+=2) {
+			for (int j = 0; j < nvEdge; j++) {
+				float t = (float)j / (nvEdge-1);
+				edgesVectorized.push_back(vec2(edges[i].x * t + edges[i+1].x * (1.0f - t), edges[i].y * t + edges[i + 1].y * (1.0f - t)));
+			}
+		}
 	}
 	void build(Atom root) {
 		for (int i = 0; i < root.bonds; i++) {
 			if (!root.bondedWith[i]->assigned) {
 				float angle = 2 * pi / (root.bonds) + rand() % 180 * pi / 180;
-				float x = 5.0f - (0.1 * (float)(rand() % 50) - 2.5);
+				float x = (0.5f - (0.01 * (float)(rand() % 50) - 0.25)) /1.5;
 				float y = 0;
 				root.bondedWith[i]->offset = root.offset + vec2(x * cosf(angle * i) - y * sinf(angle * i), x * sinf(angle * i) + y * cosf(angle * i));
+
+				
 				edges.push_back(root.offset);
 				edges.push_back(root.bondedWith[i]->offset);
 				root.bondedWith[i]->assigned = true;
@@ -246,13 +273,13 @@ public:
 		glGenVertexArrays(1, &vao);
 		glBindVertexArray(vao);
 
-		unsigned int vbo;
+		
 		glGenBuffers(1, &vbo);
 
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 		glBufferData(GL_ARRAY_BUFFER,
-			edges.size() * sizeof(vec2),
-			&edges[0],
+			edgesVectorized.size() * sizeof(vec2),
+			&edgesVectorized[0],
 			GL_DYNAMIC_DRAW);
 
 		glEnableVertexAttribArray(0);
@@ -267,10 +294,10 @@ public:
 		}
 	}
 
-	void update(float t) {
-		phi = t;
+	void update(float f) {
+		phi = f;
 		for(int i = 0; i < size; i++){
-			atoms[i]->phi = t;
+			atoms[i]->phi = f;
 		}
 	}
 
@@ -280,8 +307,8 @@ public:
 			0, 0, 0, 0,
 			0, 0, 0, 1); // scaling
 
-		mat4 Mrotate(cosf(phi), sinf(phi), 0, 0,
-			-sinf(phi), cosf(phi), 0, 0,
+		mat4 Mrotate(cosf(phiTranslate), sinf(phiTranslate), 0, 0,
+			-sinf(phiTranslate), cosf(phiTranslate), 0, 0,
 			0, 0, 1, 0,
 			0, 0, 0, 1); // rotation
 
@@ -294,29 +321,64 @@ public:
 	}
 
 	void draw() {
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, edgesVectorized.size() * sizeof(vec2), &edgesVectorized[0]);
 		// set GPU uniform matrix variable MVP with the content of CPU variable MVPTransform
 		mat4 MVPTransform = M() * camera.V() * camera.P();
 		gpuProgram.setUniform(MVPTransform, "MVP");
 		gpuProgram.setUniform(vec3(1.0f, 1.0f, 1.0f), "color");
 		glBindVertexArray(vao);	// make the vao and its vbos active playing the role of the data source
-		glDrawArrays(GL_LINES, 0, edges.size());	// draw edges
+		for (int i = 0; i < edges.size()/2; i++) {
+			glDrawArrays(GL_LINE_STRIP, i*nvEdge, nvEdge);	// draw edges
+		}
 
 		for (int i = 0; i < size; i++) {
 			atoms[i]->draw();
 		}
 	}
 	~Molecule() {
+		glBindVertexArray(0);
+		glDeleteBuffers(1, &vbo);
+	}
+
+	void setPhi(float f) {
+		phi = f;
+		for (int i = 0; i < size; i++) {
+			atoms[i]->phi = f;
+		}
+	}
+
+	void moveBy(vec2 t) {
+		position = position + t;
+		for (int i = 0; i < edgesVectorized.size(); i++) {
+			edgesVectorized[i] = edgesVectorized[i] + t;
+		}
+		for (int i = 0; i < atoms.size(); i++) {
+			atoms[i]->move(t);
+		}
+	}
+
+	void rotateBy(float phi) {
+		this->phi += phi;
+		for (int i = 0; i < edgesVectorized.size(); i++) {
+			edgesVectorized[i] = rotate(edgesVectorized[i], position, phi);
+		}
+		for (int i = 0; i < size; i++) {
+			atoms[i]->rotateBy(phi, position);
+		}
 	}
 };
 
 Molecule* m1 = new Molecule();
+Molecule* m2 = new Molecule();
 
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 	glLineWidth(2.0f);
-	glPointSize(10.0f);
+	glPointSize(2.0f);
 	m1->create();
+	m2->create();
 
 	// create program for the GPU
 	gpuProgram.create(vertexSource, fragmentSource, "outColor");
@@ -324,10 +386,11 @@ void onInitialization() {
 
 // Window has become invalid: Redraw
 void onDisplay() {
-	glClearColor(0, 0, 0, 0);     // background color <- should be in init()
+	glClearColor(0.5f, 0.5f, 0.5f, 0);     // background color <- should be in init()
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // clear frame buffer
 
 	m1->draw();
+	m2->draw();
 
 	glutSwapBuffers(); // exchange buffers for double buffering
 }
@@ -345,7 +408,14 @@ void onKeyboard(unsigned char key, int pX, int pY) {
 			delete m1;
 			m1 = new Molecule();
 			m1->create();
+			m1->moveBy(vec2((float)(rand() % 1000) / 1000, (float)(rand() % 1000) / 1000));
+			delete m2;
+			m2 = new Molecule();
+			m2->create();
+			m1->moveBy(vec2((float)(rand() % 1000) / 1000, (float)(rand() % 1000) / 1000));
 		}break;
+		case 'p': m1->moveBy(vec2(0.01, 0)); break;
+		case 'o': m1->moveBy(vec2(-0.01, 0)); break;
 	}
 	glutPostRedisplay();
 }
@@ -366,7 +436,15 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
 	float sec = time / 1000.0f;
-	m1->update(sec);
+	m1->rotateBy(0.0003);
+	m2->rotateBy(-0.0003);
 	glutPostRedisplay();
 
+}
+
+vec2 rotate(vec2 point, vec2 pivot, float phi){
+	float rX = pivot.x + (point.x - pivot.x) * cos(phi) - (point.y - pivot.y) * sin(phi);
+	float rY = pivot.y + (point.x - pivot.x) * sin(phi) + (point.y - pivot.y) * cos(phi);
+
+	return vec2(rX, rY);
 }

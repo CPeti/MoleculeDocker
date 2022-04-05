@@ -4,6 +4,7 @@
 // Do not change it if you want to submit a homework.
 //=============================================================================================
 #include "framework.h"
+#include <time.h>								//REMOVE!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 // Initialization
 void onInitialization();
@@ -28,6 +29,7 @@ void onIdle();
 
 // Entry point of the application
 int main(int argc, char * argv[]) {
+	srand(time(NULL));							//REMOVE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	// Initialize GLUT, Glew and OpenGL 
 	glutInit(&argc, argv);
 
