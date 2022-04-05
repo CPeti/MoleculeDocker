@@ -103,7 +103,7 @@ public:
 	vec2 wTranslate;
 
 	Atom() {
-		mass = rand() % maxMass + 1;		//1-50x a hidrogén tömege
+		mass = 5;//rand() % maxMass + 1;		//1-50x a hidrogén tömege
 		bonds = 0;
 		charge = 0;
 	}
@@ -220,6 +220,12 @@ public:
 			center = center + atoms[i]->offset * atoms[i]->mass;
 		}
 		center = center / totalMass;
+		for (int i = 0; i < size; i++) {
+			atoms[i]->offset = atoms[i]->offset - center;
+		}
+		for (int i = 0; i < edges.size(); i++) {
+			edges[i] = edges[i] - center;
+		}
 	}
 	void build(Atom root) {
 		for (int i = 0; i < root.bonds; i++) {
