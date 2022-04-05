@@ -42,26 +42,23 @@ float pi = 3.141592653589;
 
 
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
-const char * const vertexSource = R"(
+const char* const vertexSource = R"(
 	#version 330				// Shader 3.3
 	precision highp float;		// normal floats, makes no difference on desktop computers
-
 	uniform mat4 MVP;			// uniform variable, the Model-View-Projection transformation matrix
 	layout(location = 0) in vec2 vp;	// Varying input: vp = vertex position is expected in attrib array 0
-
 	void main() {
 		gl_Position = vec4(vp.x, vp.y, 0, 1) * MVP;		// transform vp from modeling space to normalized device space
 	}
 )";
 
 // fragment shader in GLSL
-const char * const fragmentSource = R"(
+const char* const fragmentSource = R"(
 	#version 330			// Shader 3.3
 	precision highp float;	// normal floats, makes no difference on desktop computers
 	
 	uniform vec3 color;		// uniform variable, the color of the primitive
 	out vec4 outColor;		// computed color of the current pixel
-
 	void main() {
 		outColor = vec4(color, 1);	// computed color is the color of the primitive
 	}
@@ -100,6 +97,9 @@ public:
 
 	unsigned int vao2;
 	const int nv = 20;
+	float phi = 0;		//angle of rotation
+	float sx = 10;
+	float sy = 10;		//scaling
 
 	Atom() {
 		mass = rand() % maxMass + 1;		//1-50x a hidrogén tömege
@@ -121,7 +121,7 @@ public:
 		vec2 vertices[nv];
 		for (int i = 0; i < nv; i++) {
 			float fi = i * 2 * pi / nv;
-			vertices[i] = vec2(cosf(fi), sinf(fi));
+			vertices[i] = vec2(0.3*cosf(fi), 0.3*sinf(fi));
 		}
 
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -137,8 +137,28 @@ public:
 			0, NULL
 		);
 	}
+	mat4 M() {
+		mat4 Mscale(sx, 0, 0, 0,
+			0, sy, 0, 0,
+			0, 0, 0, 0,
+			0, 0, 0, 1); // scaling
+
+		mat4 Mrotate(cosf(phi), sinf(phi), 0, 0,
+			-sinf(phi), cosf(phi), 0, 0,
+			0, 0, 1, 0,
+			0, 0, 0, 1); // rotation
+
+		mat4 Mtranslate(1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 0, 0,
+			sx*offset.x, sx*offset.y, 0, 1); // translation
+
+		return Mscale * Mrotate * Mtranslate;	// model transformation
+	}
 	void draw() {
-		gpuProgram.setUniform(vec3(1.0f, 0.0f, 0.0f), "color");
+		mat4 MVPTransform = M() * camera.V() * camera.P();
+		gpuProgram.setUniform(MVPTransform, "MVP");
+		gpuProgram.setUniform(charge>=0 ? vec3(1.0f, 0.0f, 0.0f) : vec3(0.0f, 0.0f, 1.0f), "color");
 		glBindVertexArray(vao2);
 		glDrawArrays(GL_TRIANGLE_FAN, 0, nv);
 	}
@@ -200,11 +220,11 @@ public:
 		}
 		center = center / totalMass;
 	}
-	void build(Atom root) {		
+	void build(Atom root) {
 		for (int i = 0; i < root.bonds; i++) {
 			if (!root.bondedWith[i]->assigned) {
-				float angle = 2 * pi / (root.bonds) + rand()%180 * pi/180;
-				float x = 5.0f - (0.1 * (float)(rand()%50) - 2.5);
+				float angle = 2 * pi / (root.bonds) + rand() % 180 * pi / 180;
+				float x = 5.0f - (0.1 * (float)(rand() % 50) - 2.5);
 				float y = 0;
 				root.bondedWith[i]->offset = root.offset + vec2(x * cosf(angle * i) - y * sinf(angle * i), x * sinf(angle * i) + y * cosf(angle * i));
 				edges.push_back(root.offset);
@@ -215,7 +235,7 @@ public:
 		}
 	}
 	void create() {
-		
+
 		glGenVertexArrays(1, &vao);
 		glBindVertexArray(vao);
 
@@ -240,8 +260,10 @@ public:
 		}
 	}
 
-	void update(float deltaT) {
-
+	void update(float t) {
+		phi = t;
+		for(int i = 0; i < size; i++){
+		}
 	}
 
 	mat4 M() {
@@ -270,11 +292,8 @@ public:
 		gpuProgram.setUniform(vec3(1.0f, 1.0f, 1.0f), "color");
 		glBindVertexArray(vao);	// make the vao and its vbos active playing the role of the data source
 		glDrawArrays(GL_LINES, 0, edges.size());	// draw edges
-		gpuProgram.setUniform(vec3(0.0f, 0.0f, 1.0f), "color");
-		glBindVertexArray(vao);	// make the vao and its vbos active playing the role of the data source
-		glDrawArrays(GL_POINTS, 0, edges.size());	// draw edges
 
-		for(int i = 0; i < size; i++){
+		for (int i = 0; i < size; i++) {
 			atoms[i]->draw();
 		}
 	}
@@ -290,7 +309,7 @@ void onInitialization() {
 	glLineWidth(2.0f);
 	glPointSize(10.0f);
 	m1->create();
-	
+
 	// create program for the GPU
 	gpuProgram.create(vertexSource, fragmentSource, "outColor");
 }
@@ -307,16 +326,24 @@ void onDisplay() {
 
 // Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
-	if (key == 'd') {
-		delete m1;
-		m1 = new Molecule();
-		m1->create();
-		glutPostRedisplay();         // if d, invalidate display, i.e. redraw
+	switch (key) {
+		case 's': camera.Pan(vec2(-1, 0)); break;
+		case 'd': camera.Pan(vec2(+1, 0)); break;
+		case 'e': camera.Pan(vec2(0, 1)); break;
+		case 'x': camera.Pan(vec2(0, -1)); break;
+		case 'z': camera.Zoom(0.9f); break;
+		case 'Z': camera.Zoom(1.1f); break;
+		case ' ': {
+			delete m1;
+			m1 = new Molecule();
+			m1->create();
+		}break;
 	}
+	glutPostRedisplay();
 }
 
 // Key of ASCII code released
-void onKeyboard(unsigned char key, int pX, int pY) {
+void onKeyboardUp(unsigned char key, int pX, int pY) {
 }
 
 // Move mouse with key pressed
@@ -331,7 +358,7 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
 	float sec = time / 1000.0f;
-	m1->update(0.01);
+	m1->update(sec);
 	glutPostRedisplay();
-	
+
 }
