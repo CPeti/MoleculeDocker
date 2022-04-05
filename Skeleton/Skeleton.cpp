@@ -100,6 +100,7 @@ public:
 	float phi = 0;		//angle of rotation
 	float sx = 10;
 	float sy = 10;		//scaling
+	vec2 wTranslate;
 
 	Atom() {
 		mass = rand() % maxMass + 1;		//1-50x a hidrogén tömege
@@ -121,7 +122,7 @@ public:
 		vec2 vertices[nv];
 		for (int i = 0; i < nv; i++) {
 			float fi = i * 2 * pi / nv;
-			vertices[i] = vec2(0.3*cosf(fi), 0.3*sinf(fi));
+			vertices[i] = vec2(offset.x + 0.3*cosf(fi), offset.y + 0.3*sinf(fi));
 		}
 
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -151,7 +152,7 @@ public:
 		mat4 Mtranslate(1, 0, 0, 0,
 			0, 1, 0, 0,
 			0, 0, 0, 0,
-			sx*offset.x, sx*offset.y, 0, 1); // translation
+			wTranslate.x, wTranslate.y, 0, 1); // translation
 
 		return Mscale * Mrotate * Mtranslate;	// model transformation
 	}
@@ -263,6 +264,7 @@ public:
 	void update(float t) {
 		phi = t;
 		for(int i = 0; i < size; i++){
+			atoms[i]->phi = t;
 		}
 	}
 
