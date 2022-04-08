@@ -205,6 +205,7 @@ private:
 	unsigned int vao;
 	unsigned int vbo;
 public:
+	vec2 wTranslate = vec2(1, 1);	//translation
 	Molecule() {
 		size = rand() % 7 + 2;
 		for (int i = 0; i < size; i++) {
@@ -404,6 +405,7 @@ void onKeyboard(unsigned char key, int pX, int pY) {
 		case 'x': camera.Pan(vec2(0, -1)); break;
 		case 'z': camera.Zoom(0.9f); break;
 		case 'Z': camera.Zoom(1.1f); break;
+		case 'p': m1->wTranslate = m1->wTranslate + vec2(0.1, 0.1); break;
 		case ' ': {
 			delete m1;
 			m1 = new Molecule();
