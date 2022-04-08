@@ -41,6 +41,7 @@ const char* const vertexSource = R"(
 	layout(location = 0) in vec2 vp;	// Varying input: vp = vertex position is expected in attrib array 0
 	void main() {
 		gl_Position = vec4(vp.x, vp.y, 0, sqrt(vp.x*vp.x+vp.y*vp.y+1.0f)) * MVP;		// transform vp from modeling space to normalized device space
+		//gl_Position = vec4(vp.x, vp.y, 0, 1) * MVP;
 	}
 )";
 
@@ -57,12 +58,18 @@ const char* const fragmentSource = R"(
 )";
 
 vec2 rotate(vec2 point, vec2 pivot, float phi);
+float distance(vec2 p1, vec2 p2);
 
 
 int maxMass = 50;
 int maxCharge = 100;
 int bondRadius = 10; //px
-float pi = 3.141592653589;
+float pi = 3.141592653589f;
+float eCharge = 1.602176634f * pow(10, -1);//-19		//charge of an electron in Coulombs
+float hMass = 1.66 *pow(10, -1);//-29			//weight of a hydrogen atom in kg
+float epsilon = 8.854187817; //* pow(10, -12);		//vacuum permittivity, As/Vm
+float dt = 0.01;
+float rho = 1.5;
 
 float wX = 600;
 float wY = 600;
@@ -107,7 +114,7 @@ public:
 	float sy = wY/2;		//scaling
 	vec2 wTranslate;
 	std::vector<vec2> vertices;
-	float r = 0.03;
+	float r = 0.06;
 
 	Atom() {
 		mass = rand() % maxMass + 1;		//1-50x a hidrogén tömege
@@ -126,7 +133,8 @@ public:
 
 		for (int i = 0; i < nv; i++) {
 			float fi = i * 2 * pi / nv;
-			vertices.push_back(vec2(offset.x + r*cosf(fi), offset.y + r*sinf(fi)));
+			float tr = r * (fabs(mass / ((float)maxMass)) + 1)/2;
+			vertices.push_back(vec2(offset.x + tr*cosf(fi), offset.y + tr*sinf(fi)));
 		}
 
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -165,7 +173,7 @@ public:
 		glBufferSubData(GL_ARRAY_BUFFER, 0, nv * sizeof(vec2), &vertices[0]);
 		mat4 MVPTransform = M() * camera.V() * camera.P();
 		gpuProgram.setUniform(MVPTransform, "MVP");
-		float t = fabs(((float)charge)/ ((float)maxCharge - 1));
+		float t = fabs(((float)charge)/ ((float)maxCharge));
 		gpuProgram.setUniform(charge>=0 ? vec3(t, 0.0f, 0.0f) : vec3(0.0f, 0.0f, t), "color");
 		glBindVertexArray(vao);
 		glDrawArrays(GL_TRIANGLE_FAN, 0, nv);
@@ -175,55 +183,70 @@ public:
 			vertices[i] = vertices[i] + t;
 		}
 	}
-	void rotateBy(float phi, vec2 pivot) {
-		this->phi = phi;
+	void rotateBy(float angle, vec2 pivot) {
+		phi += angle;
+		offset = rotate(offset, vec2(0, 0), angle);
 		for (int i = 0; i < nv; i++) {
-			vertices[i] = rotate(vertices[i], pivot, this->phi);
+			vertices[i] = rotate(vertices[i], pivot, angle);
 		}
-	}
-	~Atom() {
 	}
 };
 
 class Molecule {
 private:
-	int size;
-	int totalMass = 0;
-	std::vector<Atom*> atoms;
-	std::vector<vec2> edges;
-	std::vector<vec2> edgesVectorized;
-	int nvEdge = 20;
-	vec2 position = vec2(0, 0);
-	float phi = 0;
+	int size;						//number of atoms in molecule
+	float mass = 0;					//sum of the atoms' mass
+	float theta = 0;					
+
+	std::vector<Atom*> atoms;		//stores the atoms
+	std::vector<vec2> edges;		//stores edge endpoints
+	std::vector<vec2> vEdges;		//stores the vectorized edges
+	int nvEdge = 20;				//edges are split into 20 pieces
+	vec2 position = vec2(0, 0);		//position of the molecule
+	float phi = 0;					//angle of rotation 
+
+	vec3 velocity = (0.0f, 0.0f, 0.0f);			//velocity
+	vec3 omega = (0.0f, 0.0f, 0.0f);			//angular velocity
+	vec3 force = (0.0f, 0.0f, 0.0f);			//force
+	vec3 m = (0.0f, 0.0f, 0.0f);				//torque
 
 
-	vec2 center;		//center of mass
-	float phiTranslate = 0;		//angle of rotation
+	vec2 center;					//center of mass
+	float phiTranslate = 0;			//angle of rotation 
 	vec2 wTranslate = vec2(0, 0);	//translation
 	float sx = wX/2;
-	float sy = wY/2;		//scaling
+	float sy = wY/2;				//scaling
+	float timeOfLastUpdate = 0;
 	unsigned int vao;
 	unsigned int vbo;
 public:
-	vec2 wTranslate = vec2(1, 1);	//translation
 	Molecule() {
+		//get number of atoms in molecule, between 2 and 8
 		size = rand() % 7 + 2;
+		//create atoms
 		for (int i = 0; i < size; i++) {
 			atoms.push_back(new Atom());
+			//give an ID to each atom
 			atoms[i]->ID = i;
+			//connect new atoms to a previous atom, creating a tree
 			if (i > 0) {
 				int j = rand() % i;
 				atoms[i]->bind(atoms[j]);
 				atoms[j]->bind(atoms[i]);
 			}
 		}
+		//calculate the total mass of the molecule and set the charges of the atoms
 		for (int i = 0; i < size; i++) {
-			totalMass += atoms[i]->mass;
+			//add atoms mass to total mass
+			mass += atoms[i]->mass;
+			//for every atom, substract a random value from its charge and add it to the next atoms charge
+			//this way the total charge of the molecule will be 0
 			int delta = rand() % maxCharge + 1;
 			atoms[i]->charge -= delta;
 			atoms[(i + 1) % size]->charge += delta;
 		}
-		int rootIndex = 0;							//node with maximum edges
+		//find the atom with the highest number of bonds, this will be the root of the tree
+		int rootIndex = 0;		
 		int maxBonds = 0;
 		for (int i = 0; i < size; i++) {
 			if (atoms[i]->bonds > maxBonds) {
@@ -231,37 +254,54 @@ public:
 				rootIndex = i;
 			}
 		}
+
+		//the roots position will be 0, 0 within the molecule
 		atoms[rootIndex]->offset = vec2(0, 0);
+		//if the atom has a position assigned, set this to true
 		atoms[rootIndex]->assigned = true;
-		printf("n: %d\n", size);
+		//set the positions of all other atoms within the molecule
 		build(*atoms[rootIndex]);
 
+		//calculate center of mass
 		for (int i = 0; i < size; i++) {
 			center = center + atoms[i]->offset * atoms[i]->mass;
 		}
-		center = center / totalMass;
+		center = center / mass;
+
+		//move center of mass to 0, 0 and push all atoms to their proper place
 		for (int i = 0; i < size; i++) {
 			atoms[i]->offset = atoms[i]->offset - center;
 		}
+
+		//move center of mass to 0, 0 and push all edge endpoints to their proper place
 		for (int i = 0; i < edges.size(); i++) {
 			edges[i] = edges[i] - center;
 		}
+
+		//calculate moment of inertia
+		for (int i = 0; i < atoms.size(); i++) {
+			float r = length(atoms[i]->offset);
+			theta += atoms[i]->mass * hMass * r * r;						//sum(m * r^2)
+		}
+
+		//vectorize the edges
+		//split all the edges into 20 smaller pieces, and put the endpoints of thes in vEdges
 		for (int i = 0; i < edges.size(); i+=2) {
 			for (int j = 0; j < nvEdge; j++) {
 				float t = (float)j / (nvEdge-1);
-				edgesVectorized.push_back(vec2(edges[i].x * t + edges[i+1].x * (1.0f - t), edges[i].y * t + edges[i + 1].y * (1.0f - t)));
+				vEdges.push_back(vec2(edges[i].x * t + edges[i+1].x * (1.0f - t), edges[i].y * t + edges[i + 1].y * (1.0f - t)));
 			}
 		}
 	}
+	//sets the position of every atom in the molecule
+	//the position is relative to the root atom, at 0, 0
 	void build(Atom root) {
 		for (int i = 0; i < root.bonds; i++) {
 			if (!root.bondedWith[i]->assigned) {
-				float angle = 2 * pi / (root.bonds) + rand() % 180 * pi / 180;
-				float x = (0.5f - (0.01 * (float)(rand() % 50) - 0.25)) /1.5;
-				float y = 0;
-				root.bondedWith[i]->offset = root.offset + vec2(x * cosf(angle * i) - y * sinf(angle * i), x * sinf(angle * i) + y * cosf(angle * i));
+				float angle = pi / 180 * (rand() % 360);
+				float l = (0.25f + (float)(rand() % 50) * 0.01f);
+				root.bondedWith[i]->offset = root.offset + rotate(vec2(l, 0), vec2(0, 0), angle);
 
-				
 				edges.push_back(root.offset);
 				edges.push_back(root.bondedWith[i]->offset);
 				root.bondedWith[i]->assigned = true;
@@ -270,17 +310,14 @@ public:
 		}
 	}
 	void create() {
-
 		glGenVertexArrays(1, &vao);
 		glBindVertexArray(vao);
 
-		
 		glGenBuffers(1, &vbo);
-
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 		glBufferData(GL_ARRAY_BUFFER,
-			edgesVectorized.size() * sizeof(vec2),
-			&edgesVectorized[0],
+			vEdges.size() * sizeof(vec2),
+			&vEdges[0],
 			GL_DYNAMIC_DRAW);
 
 		glEnableVertexAttribArray(0);
@@ -292,13 +329,6 @@ public:
 
 		for (int i = 0; i < size; i++) {
 			atoms[i]->create();
-		}
-	}
-
-	void update(float f) {
-		phi = f;
-		for(int i = 0; i < size; i++){
-			atoms[i]->phi = f;
 		}
 	}
 
@@ -323,7 +353,7 @@ public:
 
 	void draw() {
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
-		glBufferSubData(GL_ARRAY_BUFFER, 0, edgesVectorized.size() * sizeof(vec2), &edgesVectorized[0]);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, vEdges.size() * sizeof(vec2), &vEdges[0]);
 		// set GPU uniform matrix variable MVP with the content of CPU variable MVPTransform
 		mat4 MVPTransform = M() * camera.V() * camera.P();
 		gpuProgram.setUniform(MVPTransform, "MVP");
@@ -337,22 +367,46 @@ public:
 			atoms[i]->draw();
 		}
 	}
-	~Molecule() {
-		glBindVertexArray(0);
-		glDeleteBuffers(1, &vbo);
+
+	void applyForce(Molecule* molecule) {
+		omega = vec3(0, 0, 0);
+		force = vec3(0, 0, 0);
+		m = vec3(0, 0, 0);
+		for (int i = 0; i < size; i++) {
+			vec3 aVelocity = velocity + cross(omega, atoms[i]->offset);
+			//printf("vel: %f, %f, %f\n", aVelocity.x, aVelocity.y, aVelocity.z);
+			vec3 aForce = vec3(0, 0, 0);		//air resistance
+			for (int j = 0; j < molecule->size; j++) {
+				float d = max(distance(position + atoms[i]->offset, molecule->position + molecule->atoms[j]->offset), 0.05);
+				aForce = aForce + (atoms[i]->charge * molecule->atoms[j]->charge * pow(eCharge, 2))
+					/ (2 * pi * epsilon * d)
+					* normalize((position + atoms[i]->offset) - (molecule->position + molecule->atoms[j]->offset));
+			}
+			aForce = aForce - aVelocity * rho;
+			force = force + aForce;
+			m = m + cross(atoms[i]->offset, aForce);
+		}
+		//printf("force : %f, %f, %f\n", force.x, force.y, force.z);
+		//printf("M : %f, %f, %f\n", m.x, m.y, m.z);
 	}
 
-	void setPhi(float f) {
-		phi = f;
-		for (int i = 0; i < size; i++) {
-			atoms[i]->phi = f;
-		}
+	void update() {
+		velocity = velocity + force / (mass * hMass) * dt;
+		//printf("velocity: %f\n", length(velocity));
+		vec3 delta = velocity * dt;
+		//printf("delta: %f\n", length(delta));
+		moveBy(vec2(delta.x, delta.y));
+		omega = omega + m / (theta * hMass) * dt;
+		float deltaPhi = (omega * dt).z;
+		//printf("%f\n", deltaPhi);
+		rotateBy(deltaPhi);
+
 	}
 
 	void moveBy(vec2 t) {
 		position = position + t;
-		for (int i = 0; i < edgesVectorized.size(); i++) {
-			edgesVectorized[i] = edgesVectorized[i] + t;
+		for (int i = 0; i < vEdges.size(); i++) {
+			vEdges[i] = vEdges[i] + t;
 		}
 		for (int i = 0; i < atoms.size(); i++) {
 			atoms[i]->move(t);
@@ -361,8 +415,8 @@ public:
 
 	void rotateBy(float phi) {
 		this->phi += phi;
-		for (int i = 0; i < edgesVectorized.size(); i++) {
-			edgesVectorized[i] = rotate(edgesVectorized[i], position, phi);
+		for (int i = 0; i < vEdges.size(); i++) {
+			vEdges[i] = rotate(vEdges[i], position, phi);
 		}
 		for (int i = 0; i < size; i++) {
 			atoms[i]->rotateBy(phi, position);
@@ -376,10 +430,11 @@ Molecule* m2 = new Molecule();
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
-	glLineWidth(2.0f);
-	glPointSize(2.0f);
+	glLineWidth(1.0f);
 	m1->create();
 	m2->create();
+	m1->moveBy(vec2((float)(rand() % 1000) / 1000 - 0.5, (float)(rand() % 1000) / 1000 - 0.5));
+	m2->moveBy(vec2((float)(rand() % 1000) / 1000 - 0.5, (float)(rand() % 1000) / 1000 - 0.5));
 
 	// create program for the GPU
 	gpuProgram.create(vertexSource, fragmentSource, "outColor");
@@ -387,7 +442,7 @@ void onInitialization() {
 
 // Window has become invalid: Redraw
 void onDisplay() {
-	glClearColor(0.5f, 0.5f, 0.5f, 0);     // background color <- should be in init()
+	glClearColor(0.4f, 0.4f, 0.4f, 0);     // background color <- should be in init()
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // clear frame buffer
 
 	m1->draw();
@@ -405,16 +460,15 @@ void onKeyboard(unsigned char key, int pX, int pY) {
 		case 'x': camera.Pan(vec2(0, -1)); break;
 		case 'z': camera.Zoom(0.9f); break;
 		case 'Z': camera.Zoom(1.1f); break;
-		case 'p': m1->wTranslate = m1->wTranslate + vec2(0.1, 0.1); break;
 		case ' ': {
 			delete m1;
+			delete m2;
 			m1 = new Molecule();
 			m1->create();
-			m1->moveBy(vec2((float)(rand() % 1000) / 1000, (float)(rand() % 1000) / 1000));
-			delete m2;
+			m1->moveBy(vec2((float)(rand() % 1000) / 1000 -0.5, (float)(rand() % 1000) / 1000 - 0.5));
 			m2 = new Molecule();
 			m2->create();
-			m1->moveBy(vec2((float)(rand() % 1000) / 1000, (float)(rand() % 1000) / 1000));
+			m2->moveBy(vec2((float)(rand() % 1000) / 1000 - 0.5, (float)(rand() % 1000) / 1000 - 0.5));
 		}break;
 		case 'p': m1->moveBy(vec2(0.01, 0)); break;
 		case 'o': m1->moveBy(vec2(-0.01, 0)); break;
@@ -435,18 +489,33 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 }
 
 // Idle event indicating that some time elapsed: do animation here
+float lastUpdate = 0;
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
 	float sec = time / 1000.0f;
-	m1->rotateBy(0.0003);
-	m2->rotateBy(-0.0003);
+
+	float timeSinceUpdate = sec - lastUpdate;
+	for (float t = 0; t < timeSinceUpdate; t += dt) {
+		m1->applyForce(m2);
+		m2->applyForce(m1);
+		m1->update();
+		m2->update();
+		lastUpdate += dt;
+	}
 	glutPostRedisplay();
 
 }
 
 vec2 rotate(vec2 point, vec2 pivot, float phi){
-	float rX = pivot.x + (point.x - pivot.x) * cos(phi) - (point.y - pivot.y) * sin(phi);
-	float rY = pivot.y + (point.x - pivot.x) * sin(phi) + (point.y - pivot.y) * cos(phi);
+	float x = pivot.x + (point.x - pivot.x) * cosf(phi) - (point.y - pivot.y) * sinf(phi);
+	float y = pivot.y + (point.x - pivot.x) * sinf(phi) + (point.y - pivot.y) * cosf(phi);
 
-	return vec2(rX, rY);
+	return vec2(x, y);
+}
+
+float distance(vec2 p1, vec2 p2) {
+	float x = p1.x - p2.x;
+	float y = p1.y - p2.y;
+
+	return sqrt(x * x + y * y);
 }
