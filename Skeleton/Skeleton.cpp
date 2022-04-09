@@ -66,7 +66,7 @@ int maxCharge = 100;
 int bondRadius = 10; //px
 float pi = 3.141592653589f;
 float eCharge = 1.602176634f * pow(10, -1);//-19		//charge of an electron in Coulombs
-float hMass = 1.66 *pow(10, -1);//-29			//weight of a hydrogen atom in kg
+float hMass = 1.66 *pow(10, -2);//-29			//weight of a hydrogen atom in kg
 float epsilon = 8.854187817; //* pow(10, -12);		//vacuum permittivity, As/Vm
 float dt = 0.01;
 float rho = 1.5;
@@ -281,7 +281,7 @@ public:
 		//calculate moment of inertia
 		for (int i = 0; i < atoms.size(); i++) {
 			float r = length(atoms[i]->offset);
-			theta += atoms[i]->mass * hMass * r * r;						//sum(m * r^2)
+			theta += atoms[i]->mass * r * r;						//sum(m * r^2)
 		}
 
 		//vectorize the edges
@@ -377,7 +377,7 @@ public:
 			//printf("vel: %f, %f, %f\n", aVelocity.x, aVelocity.y, aVelocity.z);
 			vec3 aForce = vec3(0, 0, 0);		//air resistance
 			for (int j = 0; j < molecule->size; j++) {
-				float d = max(distance(position + atoms[i]->offset, molecule->position + molecule->atoms[j]->offset), 0.05);
+				float d = max(distance(position + atoms[i]->offset, molecule->position + molecule->atoms[j]->offset), 0.1);
 				aForce = aForce + (atoms[i]->charge * molecule->atoms[j]->charge * pow(eCharge, 2))
 					/ (2 * pi * epsilon * d)
 					* normalize((position + atoms[i]->offset) - (molecule->position + molecule->atoms[j]->offset));
@@ -392,13 +392,11 @@ public:
 
 	void update() {
 		velocity = velocity + force / (mass * hMass) * dt;
-		//printf("velocity: %f\n", length(velocity));
 		vec3 delta = velocity * dt;
-		//printf("delta: %f\n", length(delta));
 		moveBy(vec2(delta.x, delta.y));
+
 		omega = omega + m / (theta * hMass) * dt;
 		float deltaPhi = (omega * dt).z;
-		//printf("%f\n", deltaPhi);
 		rotateBy(deltaPhi);
 
 	}
