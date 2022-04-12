@@ -40,8 +40,10 @@ const char* const vertexSource = R"(
 	uniform mat4 MVP;			// uniform variable, the Model-View-Projection transformation matrix
 	layout(location = 0) in vec2 vp;	// Varying input: vp = vertex position is expected in attrib array 0
 	void main() {
-		gl_Position = vec4(vp.x, vp.y, 0, sqrt(vp.x*vp.x+vp.y*vp.y+1.0f)) * MVP;		// transform vp from modeling space to normalized device space
+		vec4 v = vec4(vp.x, vp.y, 0, 1) * MVP;
+		gl_Position = vec4(v.x, v.y, 0, sqrt(v.x*v.x+v.y*v.y+1.0f));		// transform vp from modeling space to normalized device space
 		//gl_Position = vec4(vp.x, vp.y, 0, 1) * MVP;
+		//gl_Position = vec4(vp.x, vp.y, 0, sqrt(vp.x*vp.x+vp.y*vp.y+1.0f)) * MVP;
 	}
 )";
 
@@ -64,15 +66,14 @@ float distance(vec2 p1, vec2 p2);
 int maxMass = 50;
 int maxCharge = 100;
 int bondRadius = 10; //px
-float pi = 3.141592653589f;
-float eCharge = 1.602176634f * pow(10, -1);//-19		//charge of an electron in Coulombs
-float hMass = 1.66 *pow(10, -2);//-29			//weight of a hydrogen atom in kg
-float epsilon = 8.854187817; //* pow(10, -12);		//vacuum permittivity, As/Vm
-float dt = 0.01;
-float rho = 1.5;
-
-float wX = 600;
-float wY = 600;
+float eCharge = 1.602176634f * pow(10, -1);		//charge of an electron
+float hMass = 1.66f *pow(10, -2);				//weight of a hydrogen atom
+float epsilon = 8.854187817f;					//vacuum permittivity
+float Dt = 0.01f;
+float dt = 0.01f;
+float rho = 1.5f;
+float wX = 2.0f;
+float wY = 2.0f;
 // 2D camera
 class Camera2D {
 	vec2 wCenter; // center in world coordinates
@@ -109,10 +110,8 @@ public:
 	const int nv = 20;
 	float phi = 0;
 
-	float phiTranslate = 0;		//angle of rotation
 	float sx = wX/2;
 	float sy = wY/2;		//scaling
-	vec2 wTranslate;
 	std::vector<vec2> vertices;
 	float r = 0.06;
 
@@ -132,7 +131,7 @@ public:
 		glGenBuffers(1, &vbo);
 
 		for (int i = 0; i < nv; i++) {
-			float fi = i * 2 * pi / nv;
+			float fi = i * 2 * M_PI / nv;
 			float tr = r * (fabs(mass / ((float)maxMass)) + 1)/2;
 			vertices.push_back(vec2(offset.x + tr*cosf(fi), offset.y + tr*sinf(fi)));
 		}
@@ -156,17 +155,7 @@ public:
 			0, 0, 0, 0,
 			0, 0, 0, 1); // scaling
 
-		mat4 Mrotate(cosf(phiTranslate), sinf(phiTranslate), 0, 0,
-			-sinf(phiTranslate), cosf(phiTranslate), 0, 0,
-			0, 0, 1, 0,
-			0, 0, 0, 1); // rotation
-
-		mat4 Mtranslate(1, 0, 0, 0,
-			0, 1, 0, 0,
-			0, 0, 0, 0,
-			wTranslate.x, wTranslate.y, 0, 1); // translation
-
-		return Mscale * Mrotate * Mtranslate;	// model transformation
+		return Mscale;	// model transformation
 	}
 	void draw() {
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -212,8 +201,6 @@ private:
 
 
 	vec2 center;					//center of mass
-	float phiTranslate = 0;			//angle of rotation 
-	vec2 wTranslate = vec2(0, 0);	//translation
 	float sx = wX/2;
 	float sy = wY/2;				//scaling
 	float timeOfLastUpdate = 0;
@@ -298,7 +285,7 @@ public:
 	void build(Atom root) {
 		for (int i = 0; i < root.bonds; i++) {
 			if (!root.bondedWith[i]->assigned) {
-				float angle = pi / 180 * (rand() % 360);
+				float angle = M_PI / 180 * (rand() % 360);
 				float l = (0.25f + (float)(rand() % 50) * 0.01f);
 				root.bondedWith[i]->offset = root.offset + rotate(vec2(l, 0), vec2(0, 0), angle);
 
@@ -338,17 +325,7 @@ public:
 			0, 0, 0, 0,
 			0, 0, 0, 1); // scaling
 
-		mat4 Mrotate(cosf(phiTranslate), sinf(phiTranslate), 0, 0,
-			-sinf(phiTranslate), cosf(phiTranslate), 0, 0,
-			0, 0, 1, 0,
-			0, 0, 0, 1); // rotation
-
-		mat4 Mtranslate(1, 0, 0, 0,
-			0, 1, 0, 0,
-			0, 0, 0, 0,
-			wTranslate.x, wTranslate.y, 0, 1); // translation
-
-		return Mscale * Mrotate * Mtranslate;	// model transformation
+		return Mscale;	// model transformation
 	}
 
 	void draw() {
@@ -369,7 +346,6 @@ public:
 	}
 
 	void applyForce(Molecule* molecule) {
-		omega = vec3(0, 0, 0);
 		force = vec3(0, 0, 0);
 		m = vec3(0, 0, 0);
 		for (int i = 0; i < size; i++) {
@@ -377,17 +353,15 @@ public:
 			//printf("vel: %f, %f, %f\n", aVelocity.x, aVelocity.y, aVelocity.z);
 			vec3 aForce = vec3(0, 0, 0);		//air resistance
 			for (int j = 0; j < molecule->size; j++) {
-				float d = max(distance(position + atoms[i]->offset, molecule->position + molecule->atoms[j]->offset), 0.1);
+				float d = max(distance(position + atoms[i]->offset, molecule->position + molecule->atoms[j]->offset), 0.05);
 				aForce = aForce + (atoms[i]->charge * molecule->atoms[j]->charge * pow(eCharge, 2))
-					/ (2 * pi * epsilon * d)
+					/ (2 * M_PI * epsilon * d)
 					* normalize((position + atoms[i]->offset) - (molecule->position + molecule->atoms[j]->offset));
 			}
 			aForce = aForce - aVelocity * rho;
 			force = force + aForce;
 			m = m + cross(atoms[i]->offset, aForce);
 		}
-		//printf("force : %f, %f, %f\n", force.x, force.y, force.z);
-		//printf("M : %f, %f, %f\n", m.x, m.y, m.z);
 	}
 
 	void update() {
@@ -452,10 +426,10 @@ void onDisplay() {
 // Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
 	switch (key) {
-		case 's': camera.Pan(vec2(-1, 0)); break;
-		case 'd': camera.Pan(vec2(+1, 0)); break;
-		case 'e': camera.Pan(vec2(0, 1)); break;
-		case 'x': camera.Pan(vec2(0, -1)); break;
+		case 's': camera.Pan(vec2(-0.1, 0)); break;
+		case 'd': camera.Pan(vec2(+0.1, 0)); break;
+		case 'e': camera.Pan(vec2(0, 0.1)); break;
+		case 'x': camera.Pan(vec2(0, -0.1)); break;
 		case 'z': camera.Zoom(0.9f); break;
 		case 'Z': camera.Zoom(1.1f); break;
 		case ' ': {
@@ -468,8 +442,6 @@ void onKeyboard(unsigned char key, int pX, int pY) {
 			m2->create();
 			m2->moveBy(vec2((float)(rand() % 1000) / 1000 - 0.5, (float)(rand() % 1000) / 1000 - 0.5));
 		}break;
-		case 'p': m1->moveBy(vec2(0.01, 0)); break;
-		case 'o': m1->moveBy(vec2(-0.01, 0)); break;
 	}
 	glutPostRedisplay();
 }
@@ -493,6 +465,7 @@ void onIdle() {
 	float sec = time / 1000.0f;
 
 	float timeSinceUpdate = sec - lastUpdate;
+	dt = min(timeSinceUpdate, Dt);
 	for (float t = 0; t < timeSinceUpdate; t += dt) {
 		m1->applyForce(m2);
 		m2->applyForce(m1);
