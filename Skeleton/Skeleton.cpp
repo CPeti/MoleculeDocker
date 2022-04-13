@@ -315,7 +315,8 @@ public:
 
 			vec3 aForce = vec3(0, 0, 0);
 			for (int j = 0; j < molecule->size; j++) {
-				float d = max(distance(position + atoms[i]->offset, molecule->position + molecule->atoms[j]->offset), 0.05);
+				float d = distance(position + atoms[i]->offset, molecule->position + molecule->atoms[j]->offset);
+				d = (d > 0.05) ? d : 0.05;
 				aForce = aForce + (atoms[i]->charge * molecule->atoms[j]->charge * pow(eCharge, 2))
 					/ (2 * M_PI * epsilon * d)
 					* normalize((position + atoms[i]->offset) - (molecule->position + molecule->atoms[j]->offset));
@@ -415,7 +416,7 @@ void onIdle() {
 	float sec = time / 1000.0f;
 
 	float timeSinceUpdate = sec - lastUpdate;
-	dt = min(timeSinceUpdate, Dt);
+	dt = (timeSinceUpdate < Dt) ? timeSinceUpdate : Dt;
 	for (float t = 0; t < timeSinceUpdate; t += dt) {
 		m1->applyForce(m2);
 		m2->applyForce(m1);
