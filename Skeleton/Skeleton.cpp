@@ -41,9 +41,8 @@ const char* const vertexSource = R"(
 	layout(location = 0) in vec2 vp;	// Varying input: vp = vertex position is expected in attrib array 0
 	void main() {
 		vec4 v = vec4(vp.x, vp.y, 0, 1) * MVP;
-		gl_Position = vec4(v.x, v.y, 0, sqrt(v.x*v.x+v.y*v.y+1.0f));		// transform vp from modeling space to normalized device space
-		//gl_Position = vec4(vp.x, vp.y, 0, 1) * MVP;
-		//gl_Position = vec4(vp.x, vp.y, 0, sqrt(vp.x*vp.x+vp.y*vp.y+1.0f)) * MVP;
+		float w = sqrt(pow(v.x, 2) + pow(v.y, 2) + 1.0f);
+		gl_Position = vec4(v.x / (w + 1), v.y / (w + 1), 0, 1);
 	}
 )";
 
@@ -66,15 +65,15 @@ float distance(vec2 p1, vec2 p2);
 int maxMass = 50;
 int maxCharge = 100;
 int bondRadius = 10; //px
-float eCharge = 1.602176634f * pow(10, -1);		//charge of an electron
-float hMass = 1.66f *pow(10, -2);				//weight of a hydrogen atom
+float eCharge = 1.602176634f * pow(10.0f, -1.0f);		//charge of an electron
+float hMass = 1.66f *pow(10.0f, -2.0f);				//weight of a hydrogen atom
 float epsilon = 8.854187817f;					//vacuum permittivity
 float Dt = 0.01f;
 float dt = 0.01f;
 float rho = 1.5f;
 float wX = 2.0f;
 float wY = 2.0f;
-// 2D camera
+// 2D camera - source: camera class from https://online.vik.bme.hu/mod/url/view.php?id=18342 - Színátmenetes háromszög és töröttvonal
 class Camera2D {
 	vec2 wCenter; // center in world coordinates
 	vec2 wSize;   // width and height in world coordinates
@@ -105,7 +104,7 @@ public:
 	vec2 offset = NULL;
 	bool assigned = false;
 
-	unsigned int vao;
+	unsigned int vao = 0;
 	unsigned int vbo = 0;
 	const int nv = 20;
 	float phi = 0;
@@ -113,7 +112,7 @@ public:
 	float sx = wX/2;
 	float sy = wY/2;		//scaling
 	std::vector<vec2> vertices;
-	float r = 0.06;
+	float r = 0.2;
 
 	Atom() {
 		mass = rand() % maxMass + 1;		//1-50x a hidrogén tömege
@@ -286,7 +285,7 @@ public:
 		for (int i = 0; i < root.bonds; i++) {
 			if (!root.bondedWith[i]->assigned) {
 				float angle = M_PI / 180 * (rand() % 360);
-				float l = (0.25f + (float)(rand() % 50) * 0.01f);
+				float l = (0.6f + (float)(rand() % 50) * 0.03f);
 				root.bondedWith[i]->offset = root.offset + rotate(vec2(l, 0), vec2(0, 0), angle);
 
 				edges.push_back(root.offset);
